@@ -4,7 +4,7 @@ import re
 from bs4 import BeautifulSoup
 
 from bank_notification_parsers.bank_notification_parser import BankNotificationParser
-from transaction.Transaction import Transaction, TransactionStatus
+from transaction import Transaction, TransactionStatus
 
 
 class BhdNotificationParser(BankNotificationParser):
