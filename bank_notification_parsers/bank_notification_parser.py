@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from transaction.Transaction import Transaction
+from transaction import Transaction
 
 
 class BankNotificationParser(ABC):

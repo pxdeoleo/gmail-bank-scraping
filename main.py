@@ -46,12 +46,11 @@ if __name__ == '__main__':
     args_parser.add_argument('--before', type=str, help='Date before which to search for emails. '
                                                         'Format: YYYY/MM/DD')
     args_parser.add_argument('--after', type=str, help='Date after which to search for emails. '
-                                                       'Format: YYYY/MM/DD',
-                             default=get_monday_date(date.today()).strftime('%Y/%m/%d'))
-    args_parser.add_argument("--credentials", type=str, help="Path to credentials.json file",
-                             default=os.path.join(BASE_DIR, 'credentials.json'))
+                                                       'Format: YYYY/MM/DD')
+    args_parser.add_argument("--credentials", type=str, help="Path to credentials.json file")
     args_parser.add_argument("--token", type=str, help="Path to token.json file",
                              default=os.path.join(BASE_DIR, 'token.json'))
+    args_parser.add_argument("--output", type=str, help="Path to output directory")
 
     args = args_parser.parse_args()
 
@@ -59,9 +58,10 @@ if __name__ == '__main__':
 
     label = args.label
     date_before: str = ''
-    date_after: str = ''
-    credentials_path = args.credentials
-    token_path = args.token
+    date_after: str = get_monday_date(date.today()).strftime('%Y/%m/%d')
+    credentials_path = args.credentials if args.credentials else os.path.join(BASE_DIR, 'credentials.json')
+    token_path = args.token if args.token else os.path.join(BASE_DIR, 'token.json')
+    output_dir = args.output if args.output else os.path.join(BASE_DIR, 'transactions')
 
     if args.bank == 'bhd':
         parser = BhdNotificationParser()
@@ -92,8 +92,8 @@ if __name__ == '__main__':
 
     gmail_query: str = ''
 
-    gmail_query += f'after:{date_after} '
     gmail_query += f'label:{label} '
+    gmail_query += f'after:{date_after} '
     if date_before:
         gmail_query += f'before:{date_before} '
 
@@ -121,4 +121,4 @@ if __name__ == '__main__':
                 save_transactions_as_csv([transaction for transaction in transactions if transaction.card_number == card
                                           and transaction.currency == ccy
                                           and transaction.date_time.date() == day], '%d/%m/%Y',
-                                         f'{BASE_DIR}/transactions/{card}/{ccy}', f'{day}_{card}_{ccy}.csv')
+                                         f'{output_dir}/{card}/{ccy}', f'{day}_{card}_{ccy}.csv')
