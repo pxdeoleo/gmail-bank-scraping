@@ -1,108 +1,23 @@
-import os
-import re
+import argparse
 import datetime
+import os
 from datetime import date
-from enum import Enum
 
-from bs4 import BeautifulSoup
-from gmail_api_handler import GmailAPIHandler
+from bank_notification_parsers.bank_notification_parser import BankNotificationParser
+from bank_notification_parsers.bhd_notification_parser import BhdNotificationParser
+from gmail_api.gmail_api_handler import GmailAPIHandler
+from transaction import Transaction
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-class TransactionStatus(Enum):
-    APPROVED = 1
-    REJECTED = 2
-    REVERSED = 3
 
-
-class Transaction:
-    date_time: datetime.datetime
-    ccy: str
-    amount: float
-    description: str
-    status: TransactionStatus
-    card_number: str
-
-    def __init__(self, description: str, date_time: datetime.datetime, currency: str, amount: float,
-                 status: TransactionStatus, card_number: str):
-        self.description = description
-        self.date_time = date_time
-        self.currency = currency
-        self.amount = amount
-        self.status = status
-        self.card_number = card_number
-
-
-def get_monday_date(day: date) -> date:
+def get_monday_date(weekday: date) -> date:
     """
     Returns the date of the Monday of the week of the given date.
     """
-    monday = day - datetime.timedelta(days=date.weekday(day))
+    monday = weekday - datetime.timedelta(days=date.weekday(weekday))
     return monday
-
-
-def parse_html_table(html_string: str) -> Transaction:
-    # Create a BeautifulSoup object
-    soup = BeautifulSoup(html_string, 'html.parser')
-
-    # Initialize variables to store extracted data
-    transaction_data = {
-        "date_time": None,
-        "currency": None,
-        "amount": None,
-        "description": None,
-        "status": None,
-        "card_number": None
-    }
-
-    # Get the card number
-    # Find the element containing the credit/debit card number (assuming it's in a 'p' element with class 'justify')
-    card_element = soup.find('p', class_='justify')
-
-    if card_element:
-        # Extract the text from the element
-        card_text = card_element.get_text()
-
-        # Search for the last 4 digits of the card number using regular expressions
-        card_number_match = re.search(r'\b(\d{4})\b', card_text)
-
-        if card_number_match:
-            last_4_digits = card_number_match.group(1)
-            transaction_data["card_number"] = last_4_digits
-        else:
-            transaction_data["card_number"] = "Not found"
-    else:
-        transaction_data["card_number"] = "Not found"
-
-
-    # Find the table containing transaction details
-    transaction_table = soup.find('tbody', class_='table_trans_body')
-
-    # Check if the transaction table is found
-    if transaction_table:
-        # Extract data from the table
-        tds = transaction_table.find_all('td')
-        if len(tds) == 7:
-            # Value must be converted to datetime in format '08/10/23 20:22'
-            transaction_data["date_time"] = datetime.datetime.strptime(tds[0].text.strip(), '%d/%m/%y %H:%M')
-            transaction_data["currency"] = "DOP" if tds[1].text.strip() == "RD" else tds[1].text.strip()
-            transaction_data["description"] = tds[3].text.strip()
-            status = TransactionStatus.APPROVED if tds[4].text.strip().lower() == "aprobada" \
-                else TransactionStatus.REJECTED if tds[4].text.strip().lower() == "rechazada" \
-                else TransactionStatus.REVERSED if tds[4].text.strip().lower() == "reversada" \
-                else None
-            transaction_data["status"] = status
-
-            amount = (
-                float(tds[2].text.strip())) if transaction_data["status"] == TransactionStatus.APPROVED \
-                else 0 if transaction_data["status"] == TransactionStatus.REJECTED \
-                else -float(tds[2].text.strip()) if transaction_data["status"] == TransactionStatus.REVERSED \
-                else None
-            transaction_data["amount"] = amount
-
-    # Print the extracted data as a dictionary
-    return Transaction(**transaction_data)
 
 
 def save_transactions_as_csv(transactions_list: list[Transaction], date_format: str = '%m/%d/%Y',
@@ -124,20 +39,70 @@ def save_transactions_as_csv(transactions_list: list[Transaction], date_format: 
 
 
 if __name__ == '__main__':
-    gmail_api_handler = GmailAPIHandler(scopes=['https://www.googleapis.com/auth/gmail.readonly'],
-                                        credentials_path='credentials.json',
-                                        token_path='token.json')
+    args_parser = argparse.ArgumentParser(description="Just an example",
+                                          formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    args_parser.add_argument('label', type=str, help='Gmail label to search for')
+    args_parser.add_argument("bank", type=str, help="Bank to parse notifications from", choices=['bhd'])
+    args_parser.add_argument('--before', type=str, help='Date before which to search for emails. '
+                                                        'Format: YYYY/MM/DD')
+    args_parser.add_argument('--after', type=str, help='Date after which to search for emails. '
+                                                       'Format: YYYY/MM/DD',
+                             default=get_monday_date(date.today()).strftime('%Y/%m/%d'))
+    args_parser.add_argument("--credentials", type=str, help="Path to credentials.json file",
+                             default=os.path.join(BASE_DIR, 'credentials.json'))
+    args_parser.add_argument("--token", type=str, help="Path to token.json file",
+                             default=os.path.join(BASE_DIR, 'token.json'))
+
+    args = args_parser.parse_args()
+
+    parser: BankNotificationParser
+
+    label = args.label
+    date_before: str = ''
+    date_after: str = ''
+    credentials_path = args.credentials
+    token_path = args.token
+
+    if args.bank == 'bhd':
+        parser = BhdNotificationParser()
+    else:
+        raise NotImplementedError(f'Bank {args.bank} is not supported yet')
+
+    if args.before:
+        # Check if date is valid
+        try:
+            datetime.datetime.strptime(args.before, '%Y/%m/%d')
+        except ValueError:
+            raise ValueError("Incorrect date format, should be YYYY/MM/DD")
+        date_before: str = args.before
+    if args.after:
+        # Check if date is valid
+        try:
+            datetime.datetime.strptime(args.after, '%Y/%m/%d')
+        except ValueError:
+            raise ValueError("Incorrect date format, should be YYYY/MM/DD")
+        date_after: str = args.after
+
+    gmail_api_handler = GmailAPIHandler(scopes=SCOPES,
+                                        credentials_path=credentials_path,
+                                        token_path=token_path)
     gmail_api_handler.authenticate()
 
-    monday_date = get_monday_date(date.today()).strftime('%Y/%m/%d')
-    gmail_query: str = f'label:bancos-bhd-notificacion after:{monday_date}'
+    # label = 'bancos-bhd-notificacion'
+
+    gmail_query: str = ''
+
+    gmail_query += f'after:{date_after} '
+    gmail_query += f'label:{label} '
+    if date_before:
+        gmail_query += f'before:{date_before} '
 
     messages = gmail_api_handler.get_messages(query=gmail_query)
 
     transactions = []
 
     for message in messages:
-        transactions.append(parse_html_table(message['body']))
+        transactions.append(parser.parse_html(message['body']))
 
     # Use a folder structure of [Card]/[Currency]/[Transactions].csv
     # Every .csv file will contain transactions of the same card, currency and day
@@ -157,4 +122,3 @@ if __name__ == '__main__':
                                           and transaction.currency == ccy
                                           and transaction.date_time.date() == day], '%d/%m/%Y',
                                          f'{BASE_DIR}/transactions/{card}/{ccy}', f'{day}_{card}_{ccy}.csv')
-
